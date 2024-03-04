@@ -1,0 +1,105 @@
+#include <LiquidCrystal_I2C.h>
+#include <ThreeWire.h>
+#include <RtcDS1302.h>
+
+LiquidCrystal_I2C lcd(0x27, 20, 4); // Change the I2C address if necessary
+
+ThreeWire myWire(7, 6, 8); // data, clock, reset
+RtcDS1302<ThreeWire> Rtc(myWire);
+
+// resistive sensor 
+const int res0Pin = A0;
+const int res1Pin = A1;
+const int res2Pin = A2;
+const int res3Pin = A3;
+const int res4Pin = A4;
+const int res5Pin = A5;
+
+// capacitive sensor
+
+const int cap0Pin = A6;
+const int cap1Pin = A7;
+const int cap2Pin = A8;
+const int cap3Pin = A9;
+const int cap4Pin = A10;
+const int cap5Pin = A11;
+
+// resistive percentage
+int resprctg0 = 0;
+int resprctg1 = 0;
+int resprctg2 = 0;
+int resprctg3 = 0;
+int resprctg4 = 0;
+int resprctg5 = 0;
+
+// capacitive percentage
+
+int capprctg0 = 0;
+int capprctg1 = 0;
+int capprctg2 = 0;
+int capprctg3 = 0;
+int capprctg4 = 0;
+int capprctg5 = 0;
+
+void setup() {
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+
+  // declare pin for relay
+  // relay for resistive sensor
+  pinMode(2, OUTPUT);
+  //relay for capacitive sensor
+  pinMode(3, OUTPUT);
+
+
+  Rtc.Begin();
+  // Run this code once, comment all codes below 
+  // RtcDateTime currentTime = RtcDateTime(__DATE__, __TIME__);
+  // Rtc.SetDateTime(currentTime);
+
+  Serial.begin(9600); // Initialize serial communication
+  Serial.println("RTC initialized.");
+}
+
+void loop() {
+  int res0 = analogRead(res0Pin); // Read sensor value
+  resprctg0 = map(res0, 490, 1023, 100, 0); // Map sensor value to percentage
+
+  RtcDateTime now = Rtc.GetDateTime();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Date: ");
+  lcd.print(now.Day());
+  lcd.print("/");
+  lcd.print(now.Month());
+  lcd.print("/");
+  lcd.print(now.Year());
+
+  lcd.setCursor(0, 1);
+  lcd.print("Time: ");
+  lcd.print(now.Hour());
+  lcd.print(":");
+  lcd.print(now.Minute());
+  lcd.print(":");
+  lcd.print(now.Second());
+
+  // print data from the sensor
+  lcd.setCursor(0, 2);
+  lcd.print("Sensor0: ");
+  lcd.print(res0);
+  lcd.print("   ");
+
+  
+
+  // condition if low moisture then trigger relay
+  if (resprctg0 < 10) {
+    Serial.println(" Pump on");
+    digitalWrite(2, LOW);
+  }
+  if (resprctg0 > 80) {
+    Serial.println(" Pump off");
+    digitalWrite(2, HIGH);
+  }
+  delay(1000);
+}
