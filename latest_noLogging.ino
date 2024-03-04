@@ -116,7 +116,7 @@ void loop() {
     // print data from the sensor
     lcd.setCursor(0, 2);
     lcd.print("Sensor0: ");
-    lcd.print(res0);
+    lcd.print(res0Pin);
     lcd.print("   ");
 
     
