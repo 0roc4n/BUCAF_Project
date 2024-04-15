@@ -1,0 +1,417 @@
+#include <LiquidCrystal_I2C.h> // library for LCD display
+#include <ThreeWire.h>         // library for clock module
+#include <RtcDS1302.h>         // library for real-time clock module
+#include <SD.h>                // library for SD card module
+#include <SPI.h>
+#include <DHT.h>
+
+LiquidCrystal_I2C lcd(0x27, 20, 4); // Change the I2C address if necessary
+
+ThreeWire myWire(7, 6, 8); // data, clock, reset
+RtcDS1302<ThreeWire> Rtc(myWire);
+
+#define DHTPIN 15
+#define DHTTYPE DHT22 
+DHT dht(DHTPIN, DHTTYPE); 
+
+RtcDateTime lastLoggedDate;
+File myFile; // for SD card logging
+File reactionFile;
+// Pin assignments for sensors
+const int resPins[] = {A0, A1, A2, A3, A4, A5}; // resistive sensor pins
+const int capPins[] = {A6, A7, A8, A9, A10, A11}; // capacitive sensor pins
+
+const int numSensors = 6;
+
+// Variables for humidity and temperature
+int temp;
+int humid;
+
+// Resistive sensor percentages
+int resPercentages[6];
+
+// Capacitive sensor percentages
+int capPercentages[6];
+
+bool headerPrinted = false; // Flag to check if the header has been printed
+
+void setup() {
+  dht.begin();
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+
+  // Declare pin modes for relays
+  pinMode(2, OUTPUT); // Relay for resistive sensor
+  pinMode(3, OUTPUT); // Relay for capacitive sensor
+  pinMode(5, OUTPUT); // Relay for resistive pump
+  pinMode(4, OUTPUT); // Relay for resistive pump
+
+  Rtc.Begin();
+  Serial.begin(9600); // Initialize serial communication
+  Serial.println("RTC initialized.");
+
+  // SD Card Initialization
+  if (SD.begin()) {
+    Serial.println("SD card is ready to use.");
+  } else {
+    Serial.println("SD card initialization failed");
+    return;
+  }
+
+  // Create file with current date as filename
+  String filename = getCurrentDate() + ".csv";
+  myFile = SD.open(filename, FILE_WRITE);
+
+  if (myFile) {
+    // Print header to the file
+    printHeader();
+    myFile.close(); // Close the file
+  } else {
+    Serial.println("Data Error opening file.");
+    return;
+  }
+
+}
+
+void loop() {
+  // Read sensor data
+  readSensorData();
+
+  // Display date and time on LCD
+  displayDateTime();
+
+  lastLoggedDate = Rtc.GetDateTime();
+  RtcDateTime now = Rtc.GetDateTime();
+
+  // Log data every start of the hour
+  // if (Rtc.GetDateTime().Hour() % 1 == 0 && Rtc.GetDateTime().Minute() == 0) {
+  //   logData();
+  // }
+
+  // Log data every hour
+  if (Rtc.GetDateTime().Second() == 0 && Rtc.GetDateTime().Minute() == 0 && Rtc.GetDateTime().Hour() % 1 == 0) {
+    logData();
+  }
+
+
+  // Check if the date has changed since the last logging
+  // this is for logging data
+  if (now.Day() != lastLoggedDate.Day() || now.Month() != lastLoggedDate.Month() || now.Year() != lastLoggedDate.Year()) {
+    // Create a new file with the current date as the filename
+    String filename = getCurrentDate() + ".csv";
+    myFile = SD.open(filename, FILE_WRITE);
+    if (myFile) {
+      // Print header to the file
+      printHeader();
+      myFile.close(); // Close the file
+    } else {
+      Serial.println("Error opening file.");
+      return;
+    }
+    // Update the last logged date
+    lastLoggedDate = now;
+  }
+  
+  // Control pin modes based on sensor values
+  controlPinModes();
+  
+  // ====================================
+   // Log reaction log time if resPercentage or capPercentage is below 70
+  // float resSum = 0;
+  // float capSum = 0;
+  // for (int i = 0; i < numSensors; i++) {
+  //   resSum += resPercentages[i];
+  //   capSum += capPercentages[i];
+  // }
+  // float capAverage = resSum / numSensors;
+  // float resAverage = capSum / numSensors;
+  
+  // if (resAverage < 70 || capAverage < 70) {
+  //   reactionLog(); // Log reaction log time
+  // }
+  
+  // // Check if the average of resPercentage or capPercentage reaches 80
+  // if (resAverage >= 80 || capAverage >= 80) {
+  //   // Reset headerPrinted flag to ensure header is printed on next logging
+  //   headerPrinted = false;
+  // }
+  
+  delay(3000); // Delay for stability
+}
+
+void readSensorData() {
+  for (int i = 0; i < numSensors; i++) {
+    resPercentages[i] = map(analogRead(resPins[i]), 350, 750, 100, 0);
+    capPercentages[i] = map(analogRead(capPins[i]), 370, 950, 100, 0);
+  }
+}
+
+void displayDateTime() {
+  RtcDateTime now = Rtc.GetDateTime();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Date: ");
+  lcd.print(now.Day());
+  lcd.print("/");
+  lcd.print(now.Month());
+  lcd.print("/");
+  lcd.print(now.Year());
+
+  lcd.setCursor(0, 1);
+  lcd.print("Time: ");
+  lcd.print(now.Hour());
+  lcd.print(":");
+  lcd.print(now.Minute());
+  lcd.print(":");
+  lcd.print(now.Second());
+}
+
+void logData() {
+  // Read temperature and humidity from DHT sensor
+  temp = dht.readTemperature();
+  humid = dht.readHumidity();
+  String data;
+
+  // Calculate average for resistive sensor
+  float resSum = 0;
+  for (int i = 0; i < numSensors; i++) {
+    resSum += resPercentages[i];
+  }
+  float resAverage = resSum / numSensors;
+
+  // Calculate average for capacitive sensor
+  float capSum = 0;
+  for (int i = 0; i < numSensors; i++) {
+    capSum += capPercentages[i];
+  }
+  float capAverage = capSum / numSensors;
+
+  // Log sensor data
+
+  //log data for capacitive sensor
+  data += getCurrentTime() + ",";
+  for (int i = 0; i < numSensors; i++) {
+    data += String(resPercentages[i]);
+    if (i < numSensors - 1) {
+      data += ",";
+    }
+  }
+  // add breal point
+  data += ",";
+
+  //log data for resistive sensor
+  for (int i = 0; i < numSensors; i++) {
+    data += String(capPercentages[i]);
+    if (i < numSensors - 1) {
+      data += ",";
+    }
+  }
+
+  // Append temperature, humidity, and averages
+  data += ",";
+  data += String(temp);
+  data += ",";
+  data += String(humid);
+  data += ",";
+  data += String(resAverage);
+  data += ",";
+  data += String(capAverage);
+
+  // Open file and append data
+  String filename = getCurrentDate() + ".csv";
+  myFile = SD.open(filename, FILE_WRITE);
+  if (myFile) {
+    if (!headerPrinted) {
+      printHeader();
+      headerPrinted = true;
+    }
+    myFile.println(data);
+    myFile.close();
+    Serial.println("Data logged.");
+  } else {
+    Serial.println("Error opening file for logging in Datalog.");
+    lcd.setCursor(0, 1);
+    lcd.print("no");
+    return;
+  }
+}
+
+void reactionLog() {
+  // Read temperature and humidity from DHT sensor
+  temp = dht.readTemperature();
+  humid = dht.readHumidity();
+  String reactionData;
+
+  // Calculate average for resistive sensor
+  float resSum = 0;
+  for (int i = 0; i < numSensors; i++) {
+    resSum += resPercentages[i];
+  }
+  float resAverage = resSum / numSensors;
+
+  // Calculate average for capacitive sensor
+  float capSum = 0;
+  for (int i = 0; i < numSensors; i++) {
+    capSum += capPercentages[i];
+  }
+  float capAverage = capSum / numSensors;
+
+  // Log sensor data
+
+  //log data for capacitive sensor
+  reactionData += getCurrentTime() + ",";
+  for (int i = 0; i < numSensors; i++) {
+    reactionData += String(resPercentages[i]);
+    if (i < numSensors - 1) {
+      reactionData += ",";
+    }
+  }
+  // add breal point
+  reactionData += ",";
+
+  //log data for resistive sensor
+  for (int i = 0; i < numSensors; i++) {
+    reactionData += String(capPercentages[i]);
+    if (i < numSensors - 1) {
+      reactionData += ",";
+    }
+  }
+
+  // Append temperature, humidity, and averages
+  reactionData += ",";
+  reactionData += String(temp);
+  reactionData += ",";
+  reactionData += String(humid);
+  reactionData += ",";
+  reactionData += String(resAverage);
+  reactionData += ",";
+  reactionData += String(capAverage);
+  reactionData += ",";
+  reactionData += String("is_irragated");
+  // Open the reaction log file with the current date as filename
+  String reactionFilename = getCurrentDate() + "_reaction.csv";
+  myFile = SD.open(reactionFilename, FILE_WRITE);
+  
+  if (myFile) {
+    // Check if header needs to be printed
+    if (!headerPrinted) {
+      printHeader(); // Print header if not printed already
+      headerPrinted = true;
+    }
+    
+    myFile.println(reactionData);
+    myFile.close(); // Close the reaction log file
+  } else {
+    Serial.println("Error opening reaction log file.");
+    lcd.setCursor(0, 1);
+    lcd.print("no");
+    return;
+  }
+}
+
+void printHeader() {
+  String header = "Time,";
+  for (int i = 0; i < numSensors; i++) {
+    header += "Capacitive Sample ";
+    header += String(i + 1);
+    if (i < numSensors - 1) {
+      header += ",";
+    }
+  }
+  header += ",";
+  for (int i = 0; i < numSensors; i++) {
+    header += "Resistive Sample ";
+    header += String(i + 1);
+    if (i < numSensors - 1) {
+      header += ",";
+    }
+  }
+
+  // Append temperature, humidity, and averages
+  header += ",";
+  header += "Temperature";
+  header += ",";
+  header += "Humidity";
+  header += ",";
+  header += "Capacitive Average";
+  header += ",";
+  header += "Resistive Average";
+
+  myFile.println(header);
+}
+
+String getCurrentDate() {
+  RtcDateTime now = Rtc.GetDateTime();
+  String currentDate = String(now.Year()) + String(now.Month()) + String(now.Day());
+  return currentDate;
+}
+
+String getCurrentTime() {
+  RtcDateTime now = Rtc.GetDateTime();
+  String currentTime = String(now.Hour()) + ":" + String(now.Minute()) + ":" + String(now.Second());
+  return currentTime;
+}
+
+void controlPinModes() {
+  float resSum = 0;
+  float capSum = 0;
+
+  // Calculate sum for each sensor type
+  for (int i = 0; i < numSensors; i++) {
+    resSum += resPercentages[i];
+    capSum += capPercentages[i];
+  }
+
+  // Calculate averages for each sensor type
+  float resAverage = resSum / numSensors;
+  float capAverage = capSum / numSensors;
+
+  // Print sensor data
+  Serial.println("Capacitive:");
+  Serial.println(resSum);
+  Serial.println(resAverage);
+  Serial.println("Resistive:");
+  Serial.println(capSum);
+  Serial.println(capAverage);
+
+  
+
+  // for capacitive
+  if (resAverage < 70) {
+    digitalWrite(2, HIGH); // Turn on valve
+    digitalWrite(4, LOW); // Turn on water pump
+    //record reaction log
+    // reactLog();
+    Serial.println("Pump On");
+  } else if (resAverage > 75) {
+    digitalWrite(2, LOW); // Turn off valve
+    digitalWrite(4, HIGH); // Pump is turned off
+    // reactLog();
+    Serial.println("Pump Off");
+  }
+
+  // for resistive
+  if (capAverage < 70) {
+    digitalWrite(3, HIGH); // Turn on valve
+    digitalWrite(5, LOW); // Turn on water pump
+    // reactLog();
+    Serial.println("Pump On");
+  } else if (capAverage > 75) {
+    digitalWrite(3, LOW); // Turn off valve
+    digitalWrite(5, HIGH); // Pump is turned off
+    // reactLog();
+    Serial.println("Pump Off");
+  }
+
+  // Update LCD display
+  lcd.setCursor(0, 2);
+  lcd.print("Cap AVE:");
+  lcd.print(resAverage);
+
+  lcd.setCursor(0, 3);
+  lcd.print("Res AVE:");
+  lcd.print(capAverage);
+
+  delay(3000);
+}
